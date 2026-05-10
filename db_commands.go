@@ -60,12 +60,31 @@ func (d *DB) SaveAlert(alert *Alert) error {
 		}
 	}
 
-	_, err := d.db.Exec(`INSERT OR REPLACE INTO alerts
+	// SQL portability: ON CONFLICT (id) DO UPDATE SET ... is the
+	// dialect-portable upsert form per Phase 2.1 audit.
+	_, err := d.db.Exec(`INSERT INTO alerts
 		(id, email, tradingsymbol, exchange, instrument_token, target_price,
 		 direction, triggered, created_at, triggered_at, triggered_price,
 		 reference_price, notification_sent_at,
 		 alert_type, composite_logic, composite_name, conditions_json)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT (id) DO UPDATE SET
+			email = excluded.email,
+			tradingsymbol = excluded.tradingsymbol,
+			exchange = excluded.exchange,
+			instrument_token = excluded.instrument_token,
+			target_price = excluded.target_price,
+			direction = excluded.direction,
+			triggered = excluded.triggered,
+			created_at = excluded.created_at,
+			triggered_at = excluded.triggered_at,
+			triggered_price = excluded.triggered_price,
+			reference_price = excluded.reference_price,
+			notification_sent_at = excluded.notification_sent_at,
+			alert_type = excluded.alert_type,
+			composite_logic = excluded.composite_logic,
+			composite_name = excluded.composite_name,
+			conditions_json = excluded.conditions_json`,
 		alert.ID, alert.Email, alert.Tradingsymbol, alert.Exchange,
 		alert.InstrumentToken, alert.TargetPrice, string(alert.Direction),
 		triggered, alert.CreatedAt.Format(time.RFC3339),
@@ -126,7 +145,7 @@ func (d *DB) UpdateTriggered(alertID string, price float64, at time.Time) error 
 
 // SaveTelegramChatID stores or updates a Telegram chat ID for the given email.
 func (d *DB) SaveTelegramChatID(email string, chatID int64) error {
-	_, err := d.db.Exec(`INSERT OR REPLACE INTO telegram_chat_ids (email, chat_id) VALUES (?, ?)`, email, chatID)
+	_, err := d.db.Exec(`INSERT INTO telegram_chat_ids (email, chat_id) VALUES (?, ?) ON CONFLICT (email) DO UPDATE SET chat_id = excluded.chat_id`, email, chatID)
 	if err != nil {
 		return fmt.Errorf("save telegram chat id: %w", err)
 	}
@@ -144,7 +163,12 @@ func (d *DB) SaveToken(email, accessToken, userID, userName string, storedAt tim
 			return fmt.Errorf("encrypt access_token: %w", err)
 		}
 	}
-	_, err := d.db.Exec(`INSERT OR REPLACE INTO kite_tokens (email, access_token, user_id, user_name, stored_at) VALUES (?,?,?,?,?)`,
+	_, err := d.db.Exec(`INSERT INTO kite_tokens (email, access_token, user_id, user_name, stored_at) VALUES (?,?,?,?,?)
+		ON CONFLICT (email) DO UPDATE SET
+			access_token = excluded.access_token,
+			user_id = excluded.user_id,
+			user_name = excluded.user_name,
+			stored_at = excluded.stored_at`,
 		email, storeToken, userID, userName, storedAt.Format(time.RFC3339))
 	if err != nil {
 		return fmt.Errorf("save token: %w", err)
@@ -176,7 +200,12 @@ func (d *DB) SaveCredential(email, apiKey, apiSecret, appID string, storedAt tim
 			return fmt.Errorf("encrypt api_secret: %w", err)
 		}
 	}
-	_, err := d.db.Exec(`INSERT OR REPLACE INTO kite_credentials (email, api_key, api_secret, stored_at, app_id) VALUES (?,?,?,?,?)`,
+	_, err := d.db.Exec(`INSERT INTO kite_credentials (email, api_key, api_secret, stored_at, app_id) VALUES (?,?,?,?,?)
+		ON CONFLICT (email) DO UPDATE SET
+			api_key = excluded.api_key,
+			api_secret = excluded.api_secret,
+			stored_at = excluded.stored_at,
+			app_id = excluded.app_id`,
 		email, storeKey, storeSecret, storedAt.Format(time.RFC3339), appID)
 	if err != nil {
 		return fmt.Errorf("save credential: %w", err)
@@ -208,7 +237,13 @@ func (d *DB) SaveClient(clientID, clientSecret, redirectURIsJSON, clientName str
 			return fmt.Errorf("encrypt client_secret: %w", err)
 		}
 	}
-	_, err := d.db.Exec(`INSERT OR REPLACE INTO oauth_clients (client_id, client_secret, redirect_uris, client_name, created_at, is_kite_key) VALUES (?,?,?,?,?,?)`,
+	_, err := d.db.Exec(`INSERT INTO oauth_clients (client_id, client_secret, redirect_uris, client_name, created_at, is_kite_key) VALUES (?,?,?,?,?,?)
+		ON CONFLICT (client_id) DO UPDATE SET
+			client_secret = excluded.client_secret,
+			redirect_uris = excluded.redirect_uris,
+			client_name = excluded.client_name,
+			created_at = excluded.created_at,
+			is_kite_key = excluded.is_kite_key`,
 		clientID, storeSecret, redirectURIsJSON, clientName, createdAt.Format(time.RFC3339), isKiteKeyInt)
 	if err != nil {
 		return fmt.Errorf("save oauth client: %w", err)
@@ -243,7 +278,13 @@ func (d *DB) SaveSession(sessionID, email string, createdAt, expiresAt time.Time
 			return fmt.Errorf("encrypt session_id: %w", err)
 		}
 	}
-	_, err := d.db.Exec(`INSERT OR REPLACE INTO mcp_sessions (session_id, email, created_at, expires_at, terminated, session_id_enc) VALUES (?,?,?,?,?,?)`,
+	_, err := d.db.Exec(`INSERT INTO mcp_sessions (session_id, email, created_at, expires_at, terminated, session_id_enc) VALUES (?,?,?,?,?,?)
+		ON CONFLICT (session_id) DO UPDATE SET
+			email = excluded.email,
+			created_at = excluded.created_at,
+			expires_at = excluded.expires_at,
+			terminated = excluded.terminated,
+			session_id_enc = excluded.session_id_enc`,
 		hashedID, email, createdAt.Format(time.RFC3339), expiresAt.Format(time.RFC3339), terminatedI, sessionIDEnc)
 	if err != nil {
 		return fmt.Errorf("save session: %w", err)
@@ -275,11 +316,28 @@ func (d *DB) SaveTrailingStop(ts *TrailingStop) error {
 	if !ts.LastModifiedAt.IsZero() {
 		lastModifiedAt = sql.NullString{String: ts.LastModifiedAt.Format(time.RFC3339), Valid: true}
 	}
-	_, err := d.db.Exec(`INSERT OR REPLACE INTO trailing_stops
+	_, err := d.db.Exec(`INSERT INTO trailing_stops
 		(id, email, exchange, tradingsymbol, instrument_token, order_id, variety,
 		 trail_amount, trail_pct, direction, high_water_mark, current_stop,
 		 active, created_at, deactivated_at, modify_count, last_modified_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT (id) DO UPDATE SET
+			email = excluded.email,
+			exchange = excluded.exchange,
+			tradingsymbol = excluded.tradingsymbol,
+			instrument_token = excluded.instrument_token,
+			order_id = excluded.order_id,
+			variety = excluded.variety,
+			trail_amount = excluded.trail_amount,
+			trail_pct = excluded.trail_pct,
+			direction = excluded.direction,
+			high_water_mark = excluded.high_water_mark,
+			current_stop = excluded.current_stop,
+			active = excluded.active,
+			created_at = excluded.created_at,
+			deactivated_at = excluded.deactivated_at,
+			modify_count = excluded.modify_count,
+			last_modified_at = excluded.last_modified_at`,
 		ts.ID, ts.Email, ts.Exchange, ts.Tradingsymbol, ts.InstrumentToken,
 		ts.OrderID, ts.Variety, ts.TrailAmount, ts.TrailPct, ts.Direction,
 		ts.HighWaterMark, ts.CurrentStop, active,
@@ -318,13 +376,22 @@ func (d *DB) UpdateTrailingStop(id string, hwm, currentStop float64, modifyCount
 // DB CHECK is NOT NULL so we must always supply a value, and INR is
 // the production default (gokiteconnect emits INR prices by contract).
 func (d *DB) SaveDailyPnL(entry *DailyPnLEntry) error {
-	_, err := d.db.Exec(`INSERT OR REPLACE INTO daily_pnl
+	_, err := d.db.Exec(`INSERT INTO daily_pnl
 		(date, email,
 		 holdings_pnl, holdings_pnl_currency,
 		 positions_pnl, positions_pnl_currency,
 		 net_pnl, net_pnl_currency,
 		 holdings_count, trades_count)
-		VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		VALUES (?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT (date, email) DO UPDATE SET
+			holdings_pnl = excluded.holdings_pnl,
+			holdings_pnl_currency = excluded.holdings_pnl_currency,
+			positions_pnl = excluded.positions_pnl,
+			positions_pnl_currency = excluded.positions_pnl_currency,
+			net_pnl = excluded.net_pnl,
+			net_pnl_currency = excluded.net_pnl_currency,
+			holdings_count = excluded.holdings_count,
+			trades_count = excluded.trades_count`,
 		entry.Date, entry.Email,
 		entry.HoldingsPnL, pnlCurrencyOrINR(entry.HoldingsPnLCurrency),
 		entry.PositionsPnL, pnlCurrencyOrINR(entry.PositionsPnLCurrency),
@@ -355,7 +422,18 @@ func (d *DB) SaveRegistryEntry(e *RegistryDBEntry) error {
 	if e.LastUsedAt != nil {
 		lastUsedAtS = e.LastUsedAt.Format(time.RFC3339)
 	}
-	_, err := d.db.Exec(`INSERT OR REPLACE INTO app_registry (id, api_key, api_secret, assigned_to, label, status, registered_by, source, last_used_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+	_, err := d.db.Exec(`INSERT INTO app_registry (id, api_key, api_secret, assigned_to, label, status, registered_by, source, last_used_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT (id) DO UPDATE SET
+			api_key = excluded.api_key,
+			api_secret = excluded.api_secret,
+			assigned_to = excluded.assigned_to,
+			label = excluded.label,
+			status = excluded.status,
+			registered_by = excluded.registered_by,
+			source = excluded.source,
+			last_used_at = excluded.last_used_at,
+			created_at = excluded.created_at,
+			updated_at = excluded.updated_at`,
 		e.ID, storeKey, storeSecret, e.AssignedTo, e.Label, e.Status, e.RegisteredBy, e.Source, lastUsedAtS,
 		e.CreatedAt.Format(time.RFC3339), e.UpdatedAt.Format(time.RFC3339))
 	if err != nil {

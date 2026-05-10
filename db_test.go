@@ -30,10 +30,11 @@ func openTestDB(t *testing.T) *DB {
 //
 // The interface is intentionally NARROW — it captures only the
 // driver-level surface (ExecDDL/ExecInsert/ExecResult/QueryRow/RawQuery/
-// Close/Ping/SetEncryptionKey), not the SQLite-specific helpers
-// (GetConfig/SetConfig use INSERT OR REPLACE which is SQLite-only;
-// those stay on *DB and would have a Postgres-flavored sibling on the
-// hypothetical PostgresDB).
+// Close/Ping/SetEncryptionKey). All upsert helpers (GetConfig/SetConfig
+// and the SaveX functions in db_commands.go) now use the dialect-portable
+// ON CONFLICT (...) DO UPDATE form per Phase 2.1 (kite-mcp-server commit
+// da91a39). PRAGMA dispatch + schema DDL remain dialect-specific and
+// will be branched in Phase 2.1.6's dialect.go helper.
 func TestSQLDB_DBSatisfiesInterface(t *testing.T) {
 	t.Parallel()
 	var _ SQLDB = (*DB)(nil) // compile-time assertion; runtime body is for documentation

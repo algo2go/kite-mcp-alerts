@@ -12,23 +12,28 @@ import (
 
 // SQLDB is the dialect-portable surface that *DB exposes. Captures the
 // driver-level operations callers consume (ExecDDL/ExecInsert/ExecResult/
-// QueryRow/RawQuery/Close/Ping/SetEncryptionKey) without coupling to the
-// SQLite-specific helpers (GetConfig/SetConfig use INSERT OR REPLACE,
-// which is SQLite-only — those stay on *DB and would have a Postgres-
-// flavored sibling on a hypothetical PostgresDB).
+// QueryRow/RawQuery/Close/Ping/SetEncryptionKey) without coupling to
+// dialect-specific helpers.
+//
+// Phase 2.1 SQL portability work (kite-mcp-server commit da91a39, repo
+// commits in v0.2.0 of each algo2go persistence repo): all production
+// upsert sites converted from SQLite-only INSERT OR REPLACE / INSERT
+// OR IGNORE to the portable ON CONFLICT (...) DO UPDATE / DO NOTHING
+// form (SQLite ≥3.24, Postgres ≥9.5). GetConfig/SetConfig now use the
+// portable ON CONFLICT form too — no longer SQLite-only.
+//
+// Remaining SQLite-isms reserved for Phase 2.1.6 (dialect.go helper):
+//   - PRAGMA dispatch (WAL/busy_timeout/foreign_keys) — Postgres no-op
+//   - Schema DDL (REAL → DOUBLE PRECISION cosmetic, INTEGER PRIMARY
+//     KEY AUTOINCREMENT in audit → BIGSERIAL in Postgres)
+//   - sqlite_master query in db_migrations.go:15 (1 site)
+//   - billing self-migration INSERT OR IGNORE (column-resolution
+//     swallowing semantics not replicable in Postgres)
 //
 // Postgres-readiness contract: a future Postgres adapter ships as a
-// new struct (e.g. PostgresDB) implementing this interface plus its own
-// dialect-specific helpers. Schema files in kc/alerts/db.go's DDL block
-// use SQLite-flavored syntax; a Postgres port would need a parallel DDL
-// pass (different INTEGER PRIMARY KEY semantics, no INSERT OR REPLACE,
-// JSONB instead of TEXT for conditions_json, etc.) — but the
+// new struct (e.g. PostgresDB) implementing this SQLDB interface plus
+// its own PRAGMA-dispatch and schema-introspection helpers. The
 // driver-level method surface stays identical.
-//
-// This interface exists to make the readiness explicit (compile-time
-// assertion at db_test.go) without inventing a real Postgres adapter
-// today (per .research/path-to-100-per-class-deep-dive.md Class 3:
-// "interface-only proof, real adapter scale-gated").
 type SQLDB interface {
 	ExecDDL(ddl string) error
 	ExecInsert(query string, args ...any) error
@@ -419,8 +424,12 @@ func (d *DB) GetConfig(key string) (string, error) {
 }
 
 // SetConfig stores or updates a key-value pair in the config table.
+//
+// SQL portability: ON CONFLICT (key) DO UPDATE SET value = excluded.value
+// is the dialect-portable upsert form (SQLite ≥3.24, Postgres ≥9.5) per
+// kite-mcp-server Phase 2.1 audit. Single SQL string for both dialects.
 func (d *DB) SetConfig(key, value string) error {
-	_, err := d.db.Exec(`INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)`, key, value)
+	_, err := d.db.Exec(`INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, value)
 	if err != nil {
 		return fmt.Errorf("set config %s: %w", key, err)
 	}

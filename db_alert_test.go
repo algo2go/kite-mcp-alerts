@@ -385,7 +385,7 @@ func TestSaveAlert_AllFieldsPopulated(t *testing.T) {
 
 
 // ===========================================================================
-// SaveAlert — duplicate key (INSERT OR REPLACE should upsert)
+// SaveAlert — duplicate key (ON CONFLICT (id) DO UPDATE should upsert)
 // ===========================================================================
 func TestSaveAlert_DuplicateKey(t *testing.T) {
 	t.Parallel()
