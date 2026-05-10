@@ -265,8 +265,9 @@ CREATE INDEX IF NOT EXISTS idx_app_registry_api_key ON app_registry(api_key);`
 
 	// Migrate mcp_sessions: add session_id_enc column for encrypted session ID recovery.
 	// If the column doesn't exist, add it and clear existing rows (they stored plaintext IDs).
-	var hasEncCol int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('mcp_sessions') WHERE name = 'session_id_enc'`).Scan(&hasEncCol); err == nil && hasEncCol == 0 {
+	// Column-existence probe routes through ColumnExists (Phase 2.1.6 dialect helper).
+	hasEncCol, encErr := ColumnExists(DialectSQLite, db, "mcp_sessions", "session_id_enc")
+	if encErr == nil && !hasEncCol {
 		db.Exec(`ALTER TABLE mcp_sessions ADD COLUMN session_id_enc TEXT DEFAULT ''`) // #nosec G104 -- idempotent migration
 		// Clear existing sessions — they have plaintext session IDs as PKs, which are
 		// incompatible with the new HMAC-hashed PK scheme. 12h expiry makes this acceptable.

@@ -9,10 +9,31 @@ import (
 // migrateRegistryCheckConstraint recreates the app_registry table with an expanded
 // CHECK constraint that includes 'invalid' and 'replaced' statuses. This is needed
 // because SQLite does not support ALTER CHECK.
+//
+// The "is migration needed?" probe queries sqlite_master for the table's
+// declared CREATE TABLE SQL (only SQLite preserves this — Postgres
+// information_schema does not). Therefore the early-exit on Postgres
+// is "migration unnecessary" — Postgres adapter (Phase 2.2) will
+// declare the expanded CHECK in its initial DDL, no migration needed.
 func migrateRegistryCheckConstraint(db *sql.DB) error {
-	// Check if the migration is needed by looking at the current table SQL.
+	// Existence probe via dialect-portable helper. If the table is
+	// absent (fresh install path), DDL will create it with the
+	// expanded CHECK; nothing to migrate.
+	exists, err := TableExists(DialectSQLite, db, "app_registry")
+	if err != nil {
+		return fmt.Errorf("check app_registry exists: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+
+	// SQLite-specific: read the table's declared CREATE TABLE SQL
+	// to detect whether the legacy CHECK constraint is in place.
+	// Phase 2.2 will route this through dialect.go (Postgres branch
+	// returns empty, treated as already-migrated since fresh
+	// Postgres installs include the expanded CHECK in DDL).
 	var tableSql string
-	err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='app_registry'`).Scan(&tableSql)
+	err = db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='app_registry'`).Scan(&tableSql)
 	if err != nil {
 		return nil // table doesn't exist yet (will be created by DDL), nothing to migrate
 	}
@@ -66,14 +87,18 @@ func migrateRegistryCheckConstraint(db *sql.DB) error {
 }
 
 // migrateAlerts applies incremental schema migrations to the alerts table.
+//
+// All column-existence probes route through ColumnExists (Phase 2.1.6
+// dialect helper) so the migration code stays dialect-agnostic. The
+// ALTER TABLE ADD COLUMN syntax itself is portable across SQLite +
+// Postgres; no dispatch needed for the mutation.
 func migrateAlerts(db *sql.DB) error {
-	// Check if reference_price column exists.
-	var count int
-	err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('alerts') WHERE name = 'reference_price'`).Scan(&count)
+	// Check if reference_price column exists via dialect helper.
+	exists, err := ColumnExists(DialectSQLite, db, "alerts", "reference_price")
 	if err != nil {
 		return fmt.Errorf("check reference_price column: %w", err)
 	}
-	if count == 0 {
+	if !exists {
 		if _, err := db.Exec(`ALTER TABLE alerts ADD COLUMN reference_price REAL`); err != nil {
 			return fmt.Errorf("add reference_price column: %w", err)
 		}
