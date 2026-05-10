@@ -48,18 +48,29 @@ import (
 type Dialect string
 
 const (
-	// DialectSQLite — modernc.org/sqlite (cgo-free) is the only
-	// production driver at v0.3.0. WAL journal + busy_timeout=5000ms
-	// + foreign_keys=ON via DSN _pragma=foreign_keys(1).
+	// DialectSQLite — modernc.org/sqlite (cgo-free) is the local
+	// embedded driver. WAL journal + busy_timeout=5000ms +
+	// foreign_keys=ON via DSN _pragma=foreign_keys(1).
 	DialectSQLite Dialect = "sqlite"
 
 	// DialectPostgres — github.com/jackc/pgx/v5 via database/sql
-	// stdlib. Phase 2.2 deliverable. NOT WIRED at v0.3.0 — helpers
-	// recognize the value but only SchemaDDL has a (placeholder)
-	// branch. Other helpers route Postgres calls through the
-	// information_schema queries that work on real Postgres servers
-	// even though no Postgres adapter exists in this repo yet.
+	// stdlib. Phase 2.2 deliverable. Postgres-flavored DDL
+	// (REAL → DOUBLE PRECISION, INTEGER → BIGINT) routes via
+	// SchemaDDL(DialectPostgres). Catalog queries route via
+	// information_schema; placeholders rewritten `?` → `$N` per
+	// rewritePlaceholders.
 	DialectPostgres Dialect = "postgres"
+
+	// DialectLibSQL — github.com/tursodatabase/libsql-client-go/libsql
+	// via database/sql stdlib. Phase 2.6 Path 6 deliverable.
+	// libSQL is an SQLite fork (Turso) that accepts SQLite-flavored
+	// SQL natively — including `?` placeholders, INSERT OR REPLACE/
+	// IGNORE, ON CONFLICT, sqlite_master/pragma_table_info. So
+	// helpers route libSQL through the SAME paths as DialectSQLite
+	// at the SQL level. The only difference is connection: libSQL
+	// is hosted (libsql:// URL with ?authToken=...), no PRAGMA
+	// init needed (Turso server pre-configures journal_mode + busy_timeout).
+	DialectLibSQL Dialect = "libsql"
 )
 
 // PragmaInit applies dialect-specific connection-init pragmas.
@@ -98,6 +109,12 @@ func PragmaInit(d Dialect, db *sql.DB) error {
 		// pragmas. WAL is cluster-level; busy_timeout has no analog
 		// (Postgres locks block until lock_timeout expires).
 		return nil
+	case DialectLibSQL:
+		// No-op: Turso/libSQL server pre-configures journal_mode
+		// (always WAL) and busy_timeout. The hosted layer also
+		// rejects PRAGMA writes from clients on multi-tenant
+		// instances. Avoid setting them to skip the round-trip.
+		return nil
 	default:
 		return fmt.Errorf("alerts.PragmaInit: unknown dialect %q", d)
 	}
@@ -126,7 +143,9 @@ func TableExists(d Dialect, db *sql.DB, name string) (bool, error) {
 	}
 	var query string
 	switch d {
-	case DialectSQLite:
+	case DialectSQLite, DialectLibSQL:
+		// libSQL is SQLite-compatible — sqlite_master query works
+		// natively with `?` placeholder.
 		query = `SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`
 	case DialectPostgres:
 		// information_schema.tables is part of the SQL standard and
@@ -182,8 +201,9 @@ func ColumnExists(d Dialect, db *sql.DB, table, column string) (bool, error) {
 		return false, fmt.Errorf("alerts.ColumnExists: unsafe table identifier %q", table)
 	}
 	switch d {
-	case DialectSQLite:
-		// pragma_table_info takes the table name as a literal in the
+	case DialectSQLite, DialectLibSQL:
+		// libSQL is SQLite-compatible — pragma_table_info works
+		// natively. Takes the table name as a literal in the
 		// virtual-table function call. The bound parameter is the
 		// column name being matched (the WHERE clause).
 		q := fmt.Sprintf(`SELECT COUNT(*) FROM pragma_table_info('%s') WHERE name = ?`, table)
@@ -343,7 +363,10 @@ func isSafeIdent(s string) bool {
 // always supports int64; Postgres INTEGER is fixed 4-byte.
 func SchemaDDL(d Dialect) string {
 	switch d {
-	case DialectSQLite:
+	case DialectSQLite, DialectLibSQL:
+		// libSQL is SQLite-compatible — same DDL works (REAL columns,
+		// INTEGER booleans, TEXT PRIMARY KEY, ON CONFLICT, partial
+		// indexes, sqlite_master). No Postgres-flavored substitutions.
 		return sqliteSchemaDDL
 	case DialectPostgres:
 		return postgresSchemaDDL

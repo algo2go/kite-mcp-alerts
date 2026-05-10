@@ -7,7 +7,8 @@ import (
 	"time"
 
 	"github.com/algo2go/kite-mcp-domain"
-	_ "github.com/jackc/pgx/v5/stdlib" // Postgres driver — Phase 2.2
+	_ "github.com/jackc/pgx/v5/stdlib"                       // Postgres driver — Phase 2.2
+	_ "github.com/tursodatabase/libsql-client-go/libsql"     // libSQL driver — Phase 2.6 Path 6
 	_ "modernc.org/sqlite"
 )
 
@@ -64,10 +65,10 @@ type DB struct {
 // through the correct backend syntax. Phase 2.1.6 wrappers on *DB call
 // this to pick their dispatch.
 //
-// Always non-empty after OpenDB or OpenPostgresDB returns successfully;
-// nil receiver returns DialectSQLite as a backwards-compat default for
-// pre-Phase-2.2 code paths that constructed *DB without going through
-// the constructors.
+// Always non-empty after OpenDB / OpenPostgresDB / OpenLibSQL returns
+// successfully; nil receiver returns DialectSQLite as a backwards-compat
+// default for pre-Phase-2.2 code paths that constructed *DB without
+// going through the constructors.
 func (d *DB) Dialect() Dialect {
 	if d == nil || d.driver == "" {
 		return DialectSQLite
@@ -372,6 +373,84 @@ func OpenPostgresDB(url string) (*DB, error) {
 	}
 
 	return &DB{db: db, driver: DialectPostgres}, nil
+}
+
+// OpenLibSQL opens (or connects to) a Turso/libSQL database at the
+// given libsql:// URL and ensures schema exists.
+//
+// Phase 2.6 Path 6 deliverable: makes Turso/libSQL a third backend
+// option alongside SQLite and Postgres. The returned *DB is fully
+// interchangeable with the SQLite *DB at the SQLDB interface level
+// — libSQL is SQLite-compatible at the protocol layer, including
+// `?` placeholders, ON CONFLICT, sqlite_master, pragma_table_info.
+//
+// URL format:
+//
+//	libsql://<dbname>-<username>.<region>.turso.io?authToken=<JWT>
+//
+// Example:
+//
+//	libsql://phase-2-6-canary-sundeepg98.aws-ap-south-1.turso.io?authToken=eyJ...
+//
+// Auth token is supplied as a query-string param per the libsql-
+// client-go driver convention. URL-only constructor by design (vs
+// separate URL+token args) so the env-var binding is single-string
+// (ALERT_DB_URL) — same shape as Postgres adapter.
+//
+// Connection pool: libsql-client-go registers as the "libsql"
+// sql.Driver; uses Go's default pool settings. Turso server-side
+// handles concurrency; client-side single-pool is fine.
+//
+// Schema bootstrap: applies SchemaDDL(DialectLibSQL) at open time —
+// which returns the SQLite-flavored DDL (libSQL accepts it natively).
+//
+// Migrations: libSQL adapter does NOT run the SQLite-specific
+// ALTER TABLE migrations from migrateAlerts/migrateRegistryCheckConstraint
+// because Turso deployments are GREENFIELD at v0.6.0 — fresh databases
+// get the canonical schema directly. Future migration support lands
+// in a dedicated phase if/when needed.
+//
+// PragmaInit: no-op for libSQL — Turso server pre-configures
+// journal_mode + busy_timeout. Multi-tenant Turso instances may
+// reject PRAGMA writes from clients; skipping the round-trip avoids
+// spurious errors.
+//
+// Ping: synchronous round-trip via SELECT 1 to verify the URL is
+// reachable + auth token valid. Wraps the underlying libsql error.
+func OpenLibSQL(url string) (*DB, error) {
+	if url == "" {
+		return nil, fmt.Errorf("OpenLibSQL: empty url")
+	}
+	db, err := sql.Open("libsql", url)
+	if err != nil {
+		return nil, fmt.Errorf("OpenLibSQL sql.Open: %w", err)
+	}
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("OpenLibSQL ping: %w", err)
+	}
+
+	// Phase 2.1.6 dialect helper applies dialect-appropriate init.
+	// libSQL branch is a no-op (Turso server-managed pragmas).
+	if err := PragmaInit(DialectLibSQL, db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("OpenLibSQL pragma init: %w", err)
+	}
+
+	// Schema bootstrap via SchemaDDL helper. libSQL gets SQLite-
+	// flavored DDL (CREATE TABLE IF NOT EXISTS is idempotent so
+	// repeat opens are safe).
+	ddl := SchemaDDL(DialectLibSQL)
+	if ddl == "" {
+		_ = db.Close()
+		return nil, fmt.Errorf("OpenLibSQL: empty SchemaDDL for libsql")
+	}
+	if _, err := db.Exec(ddl); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("OpenLibSQL create tables: %w", err)
+	}
+
+	return &DB{db: db, driver: DialectLibSQL}, nil
 }
 
 // TokenEntry represents a Kite access token stored in the database.

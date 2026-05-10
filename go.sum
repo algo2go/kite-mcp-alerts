@@ -8,6 +8,10 @@ github.com/algo2go/kite-mcp-logger v0.1.0 h1:A+i9vnM43sZn5Y2wEz3TAks32YKCvyob1HX
 github.com/algo2go/kite-mcp-logger v0.1.0/go.mod h1:Ffsc4kAetI15Z0QNHme9hxl28zjQI6AOWF5f3S1yJzk=
 github.com/algo2go/kite-mcp-money v0.1.0 h1:4+HEW6r0/N7h+5jsjCNJZCHYwML/SkmE8/FylcfckJ8=
 github.com/algo2go/kite-mcp-money v0.1.0/go.mod h1:bjj4XnGM+YU2B8pPKTheanSVgW6ON3t0lh2d/m7ELek=
+github.com/antlr4-go/antlr/v4 v4.13.0 h1:lxCg3LAv+EUK6t1i0y1V6/SLeUi0eKEKdhQAlS8TVTI=
+github.com/antlr4-go/antlr/v4 v4.13.0/go.mod h1:pfChB/xh/Unjila75QW7+VU4TSnWnnk9UTnmpPaOR2g=
+github.com/coder/websocket v1.8.12 h1:5bUXkEPPIbewrnkU8LTCLVaxi4N4J8ahufH2vlo4NAo=
+github.com/coder/websocket v1.8.12/go.mod h1:LNVeNrXQZfe5qhS9ALED3uA+l5pPqvwXg3CKoDBB2gs=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
@@ -58,6 +62,8 @@ github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UV
 github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
+github.com/tursodatabase/libsql-client-go v0.0.0-20251219100830-236aa1ff8acc h1:lzi/5fg2EfinRlh3v//YyIhnc4tY7BTqazQGwb1ar+0=
+github.com/tursodatabase/libsql-client-go v0.0.0-20251219100830-236aa1ff8acc/go.mod h1:08inkKyguB6CGGssc/JzhmQWwBgFQBgjlYFjxjRh7nU=
 github.com/zerodha/gokiteconnect/v4 v4.4.0 h1:LHuv7nUe520se6EEnRZLHMjOih4fo9OhnJnODN+ek2M=
 github.com/zerodha/gokiteconnect/v4 v4.4.0/go.mod h1:JsOFotex2pCS53EpYJADRpN5Xp4f5+jgAQsIjEWGFrw=
 go.uber.org/goleak v1.3.0 h1:2K3zAYmnTNqV73imy9J1T3WC+gmCePx2hEGkimedGto=
