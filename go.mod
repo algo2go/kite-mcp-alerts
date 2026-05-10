@@ -1,4 +1,4 @@
-module github.com/zerodha/kite-mcp-server/kc/alerts
+module github.com/algo2go/kite-mcp-alerts
 
 go 1.25.0
 
@@ -26,16 +26,15 @@ go 1.25.0
 // this dispatch — must come BEFORE kc/papertrading + kc/usecases +
 // kc/telegram which all import kc/alerts).
 require (
-	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
-	github.com/google/uuid v1.6.0
-	github.com/stretchr/testify v1.10.0
-	github.com/zerodha/gokiteconnect/v4 v4.4.0
 	github.com/algo2go/kite-mcp-broker v0.1.0
 	github.com/algo2go/kite-mcp-domain v0.1.0
 	github.com/algo2go/kite-mcp-isttz v0.1.0
 	github.com/algo2go/kite-mcp-logger v0.1.0
 	github.com/algo2go/kite-mcp-money v0.1.0 // indirect
-	github.com/zerodha/kite-mcp-server/testutil v0.0.0-00010101000000-000000000000
+	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
+	github.com/google/uuid v1.6.0
+	github.com/stretchr/testify v1.10.0
+	github.com/zerodha/gokiteconnect/v4 v4.4.0
 	modernc.org/sqlite v1.46.1
 )
 
@@ -61,9 +60,4 @@ require (
 	modernc.org/libc v1.67.6 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-)
-
-replace (
-	github.com/zerodha/kite-mcp-server => ../..
-	github.com/zerodha/kite-mcp-server/testutil => ../../testutil
 )

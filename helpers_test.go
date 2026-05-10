@@ -1,20 +1,22 @@
 package alerts
 
-// helpers_test.go — shared test infrastructure for the kc/alerts package.
-// Consolidates helpers that were previously scattered across alert test files
-// and aligns the package on testutil.DiscardLogger as the shared no-op logger.
+// helpers_test.go - shared test infrastructure for the kc/alerts package.
+// Consolidates helpers that were previously scattered across alert test files.
+//
+// Note: this file originally imported github.com/zerodha/kite-mcp-server/testutil
+// for testutil.DiscardLogger(). After Path A.11 extraction to algo2go, the
+// testutil dep was inlined as a stdlib slog.New(slog.NewTextHandler(io.Discard,
+// nil)) call so this module stays self-contained without an unpublished
+// transitive testutil dep.
 
 import (
+	"io"
 	"log/slog"
-
-	"github.com/zerodha/kite-mcp-server/testutil"
 )
 
-// testLogger returns a discard logger shared across the alerts test suite. It
-// delegates to testutil.DiscardLogger so every package converges on the same
-// no-op logger fixture.
+// testLogger returns a discard logger shared across the alerts test suite.
 func testLogger() *slog.Logger {
-	return testutil.DiscardLogger()
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
 // newTestStore creates a Store with no notify callback (suitable for most
