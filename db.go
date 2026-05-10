@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/algo2go/kite-mcp-domain"
+	_ "github.com/jackc/pgx/v5/stdlib" // Postgres driver — Phase 2.2
 	_ "modernc.org/sqlite"
 )
 
@@ -45,10 +46,33 @@ type SQLDB interface {
 	SetEncryptionKey(key []byte)
 }
 
-// DB provides SQLite persistence for alerts and Telegram chat IDs.
+// DB provides persistence for alerts and Telegram chat IDs.
+//
+// Phase 2.2: now backed by either SQLite (modernc.org/sqlite) or
+// Postgres (jackc/pgx/v5/stdlib). The driver field tags the open
+// connection's dialect so dialect.go helpers can dispatch correctly
+// from a *DB receiver. OpenDB → DialectSQLite; OpenPostgresDB →
+// DialectPostgres.
 type DB struct {
 	db            *sql.DB
-	encryptionKey []byte // AES-256 key for credential encryption (nil = no encryption)
+	encryptionKey []byte  // AES-256 key for credential encryption (nil = no encryption)
+	driver        Dialect // Phase 2.2: which dialect this connection speaks
+}
+
+// Dialect returns the dialect of the open connection. Used by dialect.go
+// helpers (TableExists/ColumnExists/PragmaInit) to route catalog queries
+// through the correct backend syntax. Phase 2.1.6 wrappers on *DB call
+// this to pick their dispatch.
+//
+// Always non-empty after OpenDB or OpenPostgresDB returns successfully;
+// nil receiver returns DialectSQLite as a backwards-compat default for
+// pre-Phase-2.2 code paths that constructed *DB without going through
+// the constructors.
+func (d *DB) Dialect() Dialect {
+	if d == nil || d.driver == "" {
+		return DialectSQLite
+	}
+	return d.driver
 }
 
 // SetEncryptionKey sets the AES-256 key used to encrypt/decrypt credentials at rest.
@@ -274,7 +298,80 @@ CREATE INDEX IF NOT EXISTS idx_app_registry_api_key ON app_registry(api_key);`
 		db.Exec(`DELETE FROM mcp_sessions`) // #nosec G104 -- idempotent migration cleanup
 	}
 
-	return &DB{db: db}, nil
+	return &DB{db: db, driver: DialectSQLite}, nil
+}
+
+// OpenPostgresDB opens (or connects to) the Postgres database at the
+// given connection URL and ensures schema exists.
+//
+// Phase 2.2 deliverable: makes Postgres a real backend option alongside
+// the SQLite OpenDB. The returned *DB is fully interchangeable with the
+// SQLite *DB at the SQLDB interface level (ExecDDL/ExecInsert/QueryRow/
+// RawQuery/Close/Ping/SetEncryptionKey). dialect.go helpers
+// (TableExists/ColumnExists/PragmaInit/SchemaDDL) all dispatch correctly
+// from the *DB.driver field set here.
+//
+// URL format: standard libpq form supported by pgx, e.g.:
+//
+//	postgres://user:pass@host:5432/dbname?sslmode=disable
+//	postgres://user:pass@host/dbname (production with SSL)
+//
+// Connection pool: pgx/v5/stdlib registers as the "pgx" sql.Driver; the
+// returned *sql.DB uses Go's default pool settings (MaxOpenConns=0
+// meaning unlimited). Postgres handles concurrent connections natively
+// (unlike SQLite's single-writer constraint), so we do NOT cap at 1
+// like OpenDB does — that would defeat the point of using Postgres.
+//
+// Schema bootstrap: applies SchemaDDL(DialectPostgres) at open time.
+// The Postgres-flavored DDL maps SQLite REAL → DOUBLE PRECISION,
+// SQLite-INTEGER booleans (0/1) → BOOLEAN, and uses BIGINT-style
+// identifiers in places where SQLite would use INTEGER PRIMARY KEY
+// AUTOINCREMENT (none currently in alerts schema; relevant only for
+// kite-mcp-audit's tool_calls/consent_log tables which use surrogate
+// IDs).
+//
+// Migrations: Postgres adapter does NOT run the SQLite-specific
+// ALTER TABLE migrations from migrateAlerts/migrateRegistryCheckConstraint.
+// Postgres deployments are GREENFIELD at v0.4.0 — fresh databases get
+// the canonical schema directly. Future migration support (when
+// existing Postgres deployments need schema evolution) lands in a
+// dedicated phase, not v0.4.0.
+//
+// Ping: synchronous round-trip to verify the URL is reachable. Returns
+// the underlying pgx error wrapped with context.
+func OpenPostgresDB(url string) (*DB, error) {
+	if url == "" {
+		return nil, fmt.Errorf("OpenPostgresDB: empty url")
+	}
+	db, err := sql.Open("pgx", url)
+	if err != nil {
+		return nil, fmt.Errorf("OpenPostgresDB sql.Open: %w", err)
+	}
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("OpenPostgresDB ping: %w", err)
+	}
+
+	// Phase 2.1.6 dialect helper applies dialect-appropriate init.
+	// Postgres branch is currently a no-op (PRAGMA has no analog).
+	if err := PragmaInit(DialectPostgres, db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("OpenPostgresDB pragma init: %w", err)
+	}
+
+	// Schema bootstrap via SchemaDDL helper. Postgres-flavored DDL
+	// from dialect.go.
+	ddl := SchemaDDL(DialectPostgres)
+	if ddl == "" {
+		_ = db.Close()
+		return nil, fmt.Errorf("OpenPostgresDB: empty SchemaDDL for postgres")
+	}
+	if _, err := db.Exec(ddl); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("OpenPostgresDB create tables: %w", err)
+	}
+
+	return &DB{db: db, driver: DialectPostgres}, nil
 }
 
 // TokenEntry represents a Kite access token stored in the database.

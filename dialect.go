@@ -220,24 +220,25 @@ func ColumnExists(d Dialect, db *sql.DB, table, column string) (bool, error) {
 // stable *alerts.DB type.
 
 // TableExists is the *alerts.DB-level wrapper for the package-level
-// TableExists helper. Uses DialectSQLite at v0.3.0 (only driver in
-// production); Phase 2.2 will add a Dialect() method on *DB so this
-// wrapper picks the dialect from the open connection.
+// TableExists helper. Phase 2.2: dispatches via d.Dialect() so the
+// query routes to sqlite_master vs information_schema.tables based on
+// which constructor opened this *DB (OpenDB → SQLite, OpenPostgresDB
+// → Postgres).
 func (d *DB) TableExists(name string) (bool, error) {
 	if d == nil {
 		return false, fmt.Errorf("alerts.DB.TableExists: nil receiver")
 	}
-	return TableExists(DialectSQLite, d.db, name)
+	return TableExists(d.Dialect(), d.db, name)
 }
 
 // ColumnExists is the *alerts.DB-level wrapper for the package-level
-// ColumnExists helper. See TableExists for the dialect-detection
-// rationale.
+// ColumnExists helper. Phase 2.2: dispatches via d.Dialect() — same
+// pattern as TableExists.
 func (d *DB) ColumnExists(table, column string) (bool, error) {
 	if d == nil {
 		return false, fmt.Errorf("alerts.DB.ColumnExists: nil receiver")
 	}
-	return ColumnExists(DialectSQLite, d.db, table, column)
+	return ColumnExists(d.Dialect(), d.db, table, column)
 }
 
 // isSafeIdent restricts SQL identifiers (table names) to the subset
@@ -265,33 +266,36 @@ func isSafeIdent(s string) bool {
 // kite_tokens, kite_credentials, oauth_clients, mcp_sessions, config,
 // trailing_stops, daily_pnl, app_registry).
 //
-// At v0.3.0 (this commit) BOTH dialects return the SQLite-flavored
-// DDL block. The Postgres-flavored block (REAL → DOUBLE PRECISION,
-// INTEGER booleans → BOOLEAN, etc.) lands in Phase 2.2 when the
-// OpenPostgresDB constructor is implemented. The function signature is
-// fixed now so Phase 2.2 only needs to fill in the case body — no API
-// break.
+// Phase 2.2: returns truly dialect-flavored DDL.
+//   - DialectSQLite   → sqliteSchemaDDL (legacy form preserved for
+//                       byte-identical compatibility with OpenDB's
+//                       inline DDL literal; OpenDB still uses its
+//                       inline copy at v0.4.0)
+//   - DialectPostgres → postgresSchemaDDL (REAL → DOUBLE PRECISION,
+//                       INTEGER instrument_token → BIGINT, INTEGER
+//                       boolean columns kept as INTEGER for dump/load
+//                       portability)
 //
-// CALLER CONTRACT: OpenDB (current callsite) keeps its inline DDL string
-// literal at v0.3.0 to preserve byte-identical schema output across
-// driver-only-bumps. Phase 2.2 will migrate OpenDB to call SchemaDDL()
-// directly, after which any schema change happens here in one place.
+// The Postgres mapping deliberately preserves INTEGER (not BOOLEAN)
+// for the 0/1-encoded boolean columns (triggered, terminated, active,
+// is_kite_key) so that cross-dialect data export/import does NOT
+// require value transformation. Storage cost identical (4 bytes); the
+// columns are read with `triggeredI != 0` semantics in Go anyway.
 //
-// Why no migration of OpenDB at v0.3.0? Risk minimization: bumping
-// callsites + adding helpers in the same commit doubles the regression
-// surface. Phase 2.1.6 keeps callsite refactors limited to migrations
-// (where the helpers are NEW value); Phase 2.2 will bring OpenDB
-// into the helper.
+// REAL → DOUBLE PRECISION is the only mandatory cosmetic substitution —
+// Postgres parses REAL as 4-byte float (32-bit), but our prices are
+// float64. DOUBLE PRECISION is the explicit 8-byte form.
+//
+// instrument_token INTEGER → BIGINT: NSE/BSE instrument tokens can
+// exceed int32 range (32-bit signed: 2.1B max). BIGINT is 8-byte
+// signed (9.2 quintillion). SQLite's INTEGER is variable-width and
+// always supports int64; Postgres INTEGER is fixed 4-byte.
 func SchemaDDL(d Dialect) string {
 	switch d {
-	case DialectSQLite, DialectPostgres:
-		// Phase 2.1.6: SQLite-flavored DDL works on Postgres for
-		// the simple schema cases (TEXT/INTEGER columns, TEXT PKs,
-		// CHECK constraints, partial indexes). The cosmetic mismatches
-		// (REAL → DOUBLE PRECISION, INTEGER-as-bool semantics) are
-		// Postgres-tolerated for now; Phase 2.2 will produce a
-		// truly-Postgres-flavored variant.
+	case DialectSQLite:
 		return sqliteSchemaDDL
+	case DialectPostgres:
+		return postgresSchemaDDL
 	default:
 		return ""
 	}
@@ -396,6 +400,159 @@ CREATE TABLE IF NOT EXISTS daily_pnl (
     positions_pnl           REAL NOT NULL DEFAULT 0,
     positions_pnl_currency  TEXT NOT NULL DEFAULT 'INR',
     net_pnl                 REAL NOT NULL DEFAULT 0,
+    net_pnl_currency        TEXT NOT NULL DEFAULT 'INR',
+    holdings_count          INTEGER NOT NULL DEFAULT 0,
+    trades_count            INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (date, email)
+);
+CREATE INDEX IF NOT EXISTS idx_daily_pnl_email ON daily_pnl(email);
+
+CREATE TABLE IF NOT EXISTS app_registry (
+    id            TEXT PRIMARY KEY,
+    api_key       TEXT NOT NULL,
+    api_secret    TEXT NOT NULL,
+    assigned_to   TEXT NOT NULL DEFAULT '',
+    label         TEXT NOT NULL DEFAULT '',
+    status        TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','disabled','invalid','replaced')),
+    registered_by TEXT NOT NULL DEFAULT '',
+    source        TEXT NOT NULL DEFAULT 'admin',
+    last_used_at  TEXT NOT NULL DEFAULT '',
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_app_registry_assigned ON app_registry(assigned_to);
+CREATE INDEX IF NOT EXISTS idx_app_registry_api_key ON app_registry(api_key);`
+
+// postgresSchemaDDL is the Postgres-flavored variant of sqliteSchemaDDL
+// — the schema bootstrap applied by OpenPostgresDB at v0.4.0.
+//
+// Differences from sqliteSchemaDDL (and rationale):
+//
+//   1. REAL → DOUBLE PRECISION
+//      Postgres REAL is single-precision (4-byte float32). Our prices
+//      are float64. DOUBLE PRECISION is the explicit 8-byte form.
+//
+//   2. instrument_token INTEGER → BIGINT (alerts + trailing_stops)
+//      NSE/BSE instrument tokens can exceed int32 range. BIGINT is
+//      8-byte signed; matches the int64 we use in Go. SQLite's
+//      INTEGER is variable-width and silently handles int64; Postgres
+//      INTEGER is fixed 4-byte.
+//
+//   3. INTEGER boolean columns kept as INTEGER (NOT converted to BOOLEAN)
+//      Columns: triggered, terminated, active, is_kite_key.
+//      Storage cost identical. Cross-dialect data export/import works
+//      without value transformation. Go code reads `triggeredI != 0`
+//      regardless of dialect. Future migration to true BOOLEAN can
+//      ship in a later phase if Postgres-specific BOOLEAN aggregates
+//      become useful.
+//
+//   4. CHECK constraints, composite primary keys, partial indexes,
+//      DEFAULT clauses: identical syntax across both dialects.
+//
+//   5. CREATE TABLE IF NOT EXISTS, CREATE INDEX IF NOT EXISTS:
+//      identical syntax.
+//
+// What is NOT included here vs the SQLite path: ALTER TABLE ADD COLUMN
+// migrations from migrateAlerts/migrateRegistryCheckConstraint. Postgres
+// deployments at v0.4.0 are GREENFIELD — fresh databases get the
+// canonical schema directly. Existing-Postgres-deployment migration
+// support is reserved for a later phase if/when needed.
+const postgresSchemaDDL = `
+CREATE TABLE IF NOT EXISTS alerts (
+    id                   TEXT PRIMARY KEY,
+    email                TEXT NOT NULL,
+    tradingsymbol        TEXT NOT NULL,
+    exchange             TEXT NOT NULL,
+    instrument_token     BIGINT NOT NULL,
+    target_price         DOUBLE PRECISION NOT NULL DEFAULT 0,
+    direction            TEXT NOT NULL DEFAULT 'above',
+    triggered            INTEGER NOT NULL DEFAULT 0,
+    created_at           TEXT NOT NULL,
+    triggered_at         TEXT,
+    triggered_price      DOUBLE PRECISION,
+    reference_price      DOUBLE PRECISION,
+    notification_sent_at TEXT,
+    alert_type           TEXT NOT NULL DEFAULT 'single',
+    composite_logic      TEXT,
+    composite_name       TEXT,
+    conditions_json      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_alerts_email ON alerts(email);
+
+CREATE TABLE IF NOT EXISTS telegram_chat_ids (
+    email   TEXT PRIMARY KEY,
+    chat_id BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS kite_tokens (
+    email        TEXT PRIMARY KEY,
+    access_token TEXT NOT NULL,
+    user_id      TEXT NOT NULL,
+    user_name    TEXT NOT NULL,
+    stored_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS kite_credentials (
+    email      TEXT PRIMARY KEY,
+    api_key    TEXT NOT NULL,
+    api_secret TEXT NOT NULL,
+    stored_at  TEXT NOT NULL,
+    app_id     TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS oauth_clients (
+    client_id     TEXT PRIMARY KEY,
+    client_secret TEXT NOT NULL,
+    redirect_uris TEXT NOT NULL,
+    client_name   TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    is_kite_key   INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS mcp_sessions (
+    session_id      TEXT PRIMARY KEY,
+    email           TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL,
+    expires_at      TEXT NOT NULL,
+    terminated      INTEGER NOT NULL DEFAULT 0,
+    session_id_enc  TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS config (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS trailing_stops (
+    id               TEXT PRIMARY KEY,
+    email            TEXT NOT NULL,
+    exchange         TEXT NOT NULL,
+    tradingsymbol    TEXT NOT NULL,
+    instrument_token BIGINT NOT NULL,
+    order_id         TEXT NOT NULL,
+    variety          TEXT NOT NULL DEFAULT 'regular',
+    trail_amount     DOUBLE PRECISION NOT NULL DEFAULT 0,
+    trail_pct        DOUBLE PRECISION NOT NULL DEFAULT 0,
+    direction        TEXT NOT NULL CHECK(direction IN ('long','short')),
+    high_water_mark  DOUBLE PRECISION NOT NULL,
+    current_stop     DOUBLE PRECISION NOT NULL,
+    active           INTEGER NOT NULL DEFAULT 1,
+    created_at       TEXT NOT NULL,
+    deactivated_at   TEXT,
+    modify_count     INTEGER NOT NULL DEFAULT 0,
+    last_modified_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_trailing_stops_email ON trailing_stops(email);
+CREATE INDEX IF NOT EXISTS idx_trailing_stops_active ON trailing_stops(active);
+
+CREATE TABLE IF NOT EXISTS daily_pnl (
+    date                    TEXT NOT NULL,
+    email                   TEXT NOT NULL,
+    holdings_pnl            DOUBLE PRECISION NOT NULL DEFAULT 0,
+    holdings_pnl_currency   TEXT NOT NULL DEFAULT 'INR',
+    positions_pnl           DOUBLE PRECISION NOT NULL DEFAULT 0,
+    positions_pnl_currency  TEXT NOT NULL DEFAULT 'INR',
+    net_pnl                 DOUBLE PRECISION NOT NULL DEFAULT 0,
     net_pnl_currency        TEXT NOT NULL DEFAULT 'INR',
     holdings_count          INTEGER NOT NULL DEFAULT 0,
     trades_count            INTEGER NOT NULL DEFAULT 0,

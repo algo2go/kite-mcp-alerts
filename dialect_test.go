@@ -311,17 +311,29 @@ func TestSchemaDDL_SQLite_ContainsKnownTables(t *testing.T) {
 	}
 }
 
-func TestSchemaDDL_Postgres_ReturnsSQLiteFlavor_AtV030(t *testing.T) {
+func TestSchemaDDL_Postgres_DivergesFromSQLite_AtV040(t *testing.T) {
 	t.Parallel()
-	// Phase 2.1.6 contract: Postgres branch returns SQLite-flavored
-	// DDL for now. Phase 2.2 (OpenPostgresDB constructor) will fill
-	// in the Postgres-flavored DDL. This test asserts the v0.3.0
-	// contract so a future regression to "empty Postgres branch"
-	// is caught immediately.
+	// Phase 2.2 contract: Postgres branch returns truly-Postgres-
+	// flavored DDL distinct from SQLite. The two dialects diverge here
+	// (they were equal at v0.3.x).
 	pgDDL := SchemaDDL(DialectPostgres)
 	sqliteDDL := SchemaDDL(DialectSQLite)
-	assert.Equal(t, sqliteDDL, pgDDL,
-		"Phase 2.1.6 contract: Postgres branch returns SQLite-flavored DDL until Phase 2.2 fills it in")
+	require.NotEmpty(t, pgDDL)
+	require.NotEmpty(t, sqliteDDL)
+	assert.NotEqual(t, sqliteDDL, pgDDL,
+		"Phase 2.2 contract: Postgres SchemaDDL should diverge from SQLite at v0.4.0")
+
+	// Spot-check: Postgres uses DOUBLE PRECISION; SQLite uses REAL.
+	assert.True(t, strings.Contains(pgDDL, "DOUBLE PRECISION"),
+		"Postgres DDL should use DOUBLE PRECISION instead of REAL")
+	assert.True(t, strings.Contains(sqliteDDL, "REAL"),
+		"SQLite DDL should still use REAL")
+
+	// Postgres uses BIGINT for instrument_token; SQLite uses INTEGER.
+	assert.True(t, strings.Contains(pgDDL, "instrument_token"),
+		"Postgres DDL should declare instrument_token column")
+	assert.True(t, strings.Contains(pgDDL, "BIGINT"),
+		"Postgres DDL should use BIGINT for instrument_token")
 }
 
 func TestSchemaDDL_UnknownDialect_ReturnsEmpty(t *testing.T) {
