@@ -62,7 +62,7 @@ func (d *DB) SaveAlert(alert *Alert) error {
 
 	// SQL portability: ON CONFLICT (id) DO UPDATE SET ... is the
 	// dialect-portable upsert form per Phase 2.1 audit.
-	_, err := d.db.Exec(`INSERT INTO alerts
+	_, err := d.runExec(`INSERT INTO alerts
 		(id, email, tradingsymbol, exchange, instrument_token, target_price,
 		 direction, triggered, created_at, triggered_at, triggered_price,
 		 reference_price, notification_sent_at,
@@ -98,7 +98,7 @@ func (d *DB) SaveAlert(alert *Alert) error {
 
 // DeleteAlert removes an alert by ID for the given email.
 func (d *DB) DeleteAlert(email, alertID string) error {
-	_, err := d.db.Exec(`DELETE FROM alerts WHERE id = ? AND email = ?`, alertID, email)
+	_, err := d.runExec(`DELETE FROM alerts WHERE id = ? AND email = ?`, alertID, email)
 	if err != nil {
 		return fmt.Errorf("delete alert: %w", err)
 	}
@@ -107,7 +107,7 @@ func (d *DB) DeleteAlert(email, alertID string) error {
 
 // DeleteAlertsByEmail removes all alerts for the given email.
 func (d *DB) DeleteAlertsByEmail(email string) error {
-	_, err := d.db.Exec(`DELETE FROM alerts WHERE email = ?`, email)
+	_, err := d.runExec(`DELETE FROM alerts WHERE email = ?`, email)
 	if err != nil {
 		return fmt.Errorf("delete alerts by email: %w", err)
 	}
@@ -116,7 +116,7 @@ func (d *DB) DeleteAlertsByEmail(email string) error {
 
 // DeleteTelegramChatID removes the Telegram chat ID mapping for the given email.
 func (d *DB) DeleteTelegramChatID(email string) error {
-	_, err := d.db.Exec(`DELETE FROM telegram_chat_ids WHERE email = ?`, email)
+	_, err := d.runExec(`DELETE FROM telegram_chat_ids WHERE email = ?`, email)
 	if err != nil {
 		return fmt.Errorf("delete telegram chat id: %w", err)
 	}
@@ -125,7 +125,7 @@ func (d *DB) DeleteTelegramChatID(email string) error {
 
 // UpdateAlertNotification records when a Telegram notification was sent for an alert.
 func (d *DB) UpdateAlertNotification(alertID string, sentAt time.Time) error {
-	_, err := d.db.Exec("UPDATE alerts SET notification_sent_at = ? WHERE id = ?",
+	_, err := d.runExec("UPDATE alerts SET notification_sent_at = ? WHERE id = ?",
 		sentAt.Format(time.RFC3339), alertID)
 	if err != nil {
 		return fmt.Errorf("update notification_sent_at: %w", err)
@@ -135,7 +135,7 @@ func (d *DB) UpdateAlertNotification(alertID string, sentAt time.Time) error {
 
 // UpdateTriggered marks an alert as triggered with the given price and time.
 func (d *DB) UpdateTriggered(alertID string, price float64, at time.Time) error {
-	_, err := d.db.Exec(`UPDATE alerts SET triggered = 1, triggered_at = ?, triggered_price = ? WHERE id = ?`,
+	_, err := d.runExec(`UPDATE alerts SET triggered = 1, triggered_at = ?, triggered_price = ? WHERE id = ?`,
 		at.Format(time.RFC3339), price, alertID)
 	if err != nil {
 		return fmt.Errorf("update triggered: %w", err)
@@ -145,7 +145,7 @@ func (d *DB) UpdateTriggered(alertID string, price float64, at time.Time) error 
 
 // SaveTelegramChatID stores or updates a Telegram chat ID for the given email.
 func (d *DB) SaveTelegramChatID(email string, chatID int64) error {
-	_, err := d.db.Exec(`INSERT INTO telegram_chat_ids (email, chat_id) VALUES (?, ?) ON CONFLICT (email) DO UPDATE SET chat_id = excluded.chat_id`, email, chatID)
+	_, err := d.runExec(`INSERT INTO telegram_chat_ids (email, chat_id) VALUES (?, ?) ON CONFLICT (email) DO UPDATE SET chat_id = excluded.chat_id`, email, chatID)
 	if err != nil {
 		return fmt.Errorf("save telegram chat id: %w", err)
 	}
@@ -163,7 +163,7 @@ func (d *DB) SaveToken(email, accessToken, userID, userName string, storedAt tim
 			return fmt.Errorf("encrypt access_token: %w", err)
 		}
 	}
-	_, err := d.db.Exec(`INSERT INTO kite_tokens (email, access_token, user_id, user_name, stored_at) VALUES (?,?,?,?,?)
+	_, err := d.runExec(`INSERT INTO kite_tokens (email, access_token, user_id, user_name, stored_at) VALUES (?,?,?,?,?)
 		ON CONFLICT (email) DO UPDATE SET
 			access_token = excluded.access_token,
 			user_id = excluded.user_id,
@@ -178,7 +178,7 @@ func (d *DB) SaveToken(email, accessToken, userID, userName string, storedAt tim
 
 // DeleteToken removes a cached token for the given email.
 func (d *DB) DeleteToken(email string) error {
-	_, err := d.db.Exec(`DELETE FROM kite_tokens WHERE email = ?`, email)
+	_, err := d.runExec(`DELETE FROM kite_tokens WHERE email = ?`, email)
 	if err != nil {
 		return fmt.Errorf("delete token: %w", err)
 	}
@@ -200,7 +200,7 @@ func (d *DB) SaveCredential(email, apiKey, apiSecret, appID string, storedAt tim
 			return fmt.Errorf("encrypt api_secret: %w", err)
 		}
 	}
-	_, err := d.db.Exec(`INSERT INTO kite_credentials (email, api_key, api_secret, stored_at, app_id) VALUES (?,?,?,?,?)
+	_, err := d.runExec(`INSERT INTO kite_credentials (email, api_key, api_secret, stored_at, app_id) VALUES (?,?,?,?,?)
 		ON CONFLICT (email) DO UPDATE SET
 			api_key = excluded.api_key,
 			api_secret = excluded.api_secret,
@@ -215,7 +215,7 @@ func (d *DB) SaveCredential(email, apiKey, apiSecret, appID string, storedAt tim
 
 // DeleteCredential removes Kite credentials for the given email.
 func (d *DB) DeleteCredential(email string) error {
-	_, err := d.db.Exec(`DELETE FROM kite_credentials WHERE email = ?`, email)
+	_, err := d.runExec(`DELETE FROM kite_credentials WHERE email = ?`, email)
 	if err != nil {
 		return fmt.Errorf("delete credential: %w", err)
 	}
@@ -237,7 +237,7 @@ func (d *DB) SaveClient(clientID, clientSecret, redirectURIsJSON, clientName str
 			return fmt.Errorf("encrypt client_secret: %w", err)
 		}
 	}
-	_, err := d.db.Exec(`INSERT INTO oauth_clients (client_id, client_secret, redirect_uris, client_name, created_at, is_kite_key) VALUES (?,?,?,?,?,?)
+	_, err := d.runExec(`INSERT INTO oauth_clients (client_id, client_secret, redirect_uris, client_name, created_at, is_kite_key) VALUES (?,?,?,?,?,?)
 		ON CONFLICT (client_id) DO UPDATE SET
 			client_secret = excluded.client_secret,
 			redirect_uris = excluded.redirect_uris,
@@ -253,7 +253,7 @@ func (d *DB) SaveClient(clientID, clientSecret, redirectURIsJSON, clientName str
 
 // DeleteClient removes an OAuth client by ID.
 func (d *DB) DeleteClient(clientID string) error {
-	_, err := d.db.Exec(`DELETE FROM oauth_clients WHERE client_id = ?`, clientID)
+	_, err := d.runExec(`DELETE FROM oauth_clients WHERE client_id = ?`, clientID)
 	if err != nil {
 		return fmt.Errorf("delete oauth client: %w", err)
 	}
@@ -278,7 +278,7 @@ func (d *DB) SaveSession(sessionID, email string, createdAt, expiresAt time.Time
 			return fmt.Errorf("encrypt session_id: %w", err)
 		}
 	}
-	_, err := d.db.Exec(`INSERT INTO mcp_sessions (session_id, email, created_at, expires_at, terminated, session_id_enc) VALUES (?,?,?,?,?,?)
+	_, err := d.runExec(`INSERT INTO mcp_sessions (session_id, email, created_at, expires_at, terminated, session_id_enc) VALUES (?,?,?,?,?,?)
 		ON CONFLICT (session_id) DO UPDATE SET
 			email = excluded.email,
 			created_at = excluded.created_at,
@@ -296,7 +296,7 @@ func (d *DB) SaveSession(sessionID, email string, createdAt, expiresAt time.Time
 // The session_id is hashed before lookup to match the HMAC-hashed PK in the database.
 func (d *DB) DeleteSession(sessionID string) error {
 	hashedID := d.hashSessionID(sessionID)
-	_, err := d.db.Exec(`DELETE FROM mcp_sessions WHERE session_id = ?`, hashedID)
+	_, err := d.runExec(`DELETE FROM mcp_sessions WHERE session_id = ?`, hashedID)
 	if err != nil {
 		return fmt.Errorf("delete session: %w", err)
 	}
@@ -316,7 +316,7 @@ func (d *DB) SaveTrailingStop(ts *TrailingStop) error {
 	if !ts.LastModifiedAt.IsZero() {
 		lastModifiedAt = sql.NullString{String: ts.LastModifiedAt.Format(time.RFC3339), Valid: true}
 	}
-	_, err := d.db.Exec(`INSERT INTO trailing_stops
+	_, err := d.runExec(`INSERT INTO trailing_stops
 		(id, email, exchange, tradingsymbol, instrument_token, order_id, variety,
 		 trail_amount, trail_pct, direction, high_water_mark, current_stop,
 		 active, created_at, deactivated_at, modify_count, last_modified_at)
@@ -350,7 +350,7 @@ func (d *DB) SaveTrailingStop(ts *TrailingStop) error {
 
 // DeactivateTrailingStop marks a trailing stop as inactive.
 func (d *DB) DeactivateTrailingStop(id string) error {
-	_, err := d.db.Exec(`UPDATE trailing_stops SET active = 0, deactivated_at = ? WHERE id = ?`,
+	_, err := d.runExec(`UPDATE trailing_stops SET active = 0, deactivated_at = ? WHERE id = ?`,
 		time.Now().Format(time.RFC3339), id)
 	if err != nil {
 		return fmt.Errorf("deactivate trailing stop: %w", err)
@@ -360,7 +360,7 @@ func (d *DB) DeactivateTrailingStop(id string) error {
 
 // UpdateTrailingStop updates the high water mark, current stop, and modify count.
 func (d *DB) UpdateTrailingStop(id string, hwm, currentStop float64, modifyCount int) error {
-	_, err := d.db.Exec(`UPDATE trailing_stops SET high_water_mark = ?, current_stop = ?, modify_count = ?, last_modified_at = ? WHERE id = ?`,
+	_, err := d.runExec(`UPDATE trailing_stops SET high_water_mark = ?, current_stop = ?, modify_count = ?, last_modified_at = ? WHERE id = ?`,
 		hwm, currentStop, modifyCount, time.Now().Format(time.RFC3339), id)
 	if err != nil {
 		return fmt.Errorf("update trailing stop: %w", err)
@@ -376,7 +376,7 @@ func (d *DB) UpdateTrailingStop(id string, hwm, currentStop float64, modifyCount
 // DB CHECK is NOT NULL so we must always supply a value, and INR is
 // the production default (gokiteconnect emits INR prices by contract).
 func (d *DB) SaveDailyPnL(entry *DailyPnLEntry) error {
-	_, err := d.db.Exec(`INSERT INTO daily_pnl
+	_, err := d.runExec(`INSERT INTO daily_pnl
 		(date, email,
 		 holdings_pnl, holdings_pnl_currency,
 		 positions_pnl, positions_pnl_currency,
@@ -422,7 +422,7 @@ func (d *DB) SaveRegistryEntry(e *RegistryDBEntry) error {
 	if e.LastUsedAt != nil {
 		lastUsedAtS = e.LastUsedAt.Format(time.RFC3339)
 	}
-	_, err := d.db.Exec(`INSERT INTO app_registry (id, api_key, api_secret, assigned_to, label, status, registered_by, source, last_used_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+	_, err := d.runExec(`INSERT INTO app_registry (id, api_key, api_secret, assigned_to, label, status, registered_by, source, last_used_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT (id) DO UPDATE SET
 			api_key = excluded.api_key,
 			api_secret = excluded.api_secret,
@@ -444,7 +444,7 @@ func (d *DB) SaveRegistryEntry(e *RegistryDBEntry) error {
 
 // DeleteRegistryEntry removes an app registration by ID.
 func (d *DB) DeleteRegistryEntry(id string) error {
-	_, err := d.db.Exec(`DELETE FROM app_registry WHERE id = ?`, id)
+	_, err := d.runExec(`DELETE FROM app_registry WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete registry entry: %w", err)
 	}

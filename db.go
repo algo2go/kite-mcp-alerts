@@ -488,22 +488,57 @@ type RegistryDBEntry struct {
 // Generic helpers for external packages that need raw SQL access.
 // ---------------------------------------------------------------------------
 
-// ExecDDL executes a DDL statement (CREATE TABLE, CREATE INDEX, etc.).
+// ExecDDL runs a DDL statement (CREATE TABLE, CREATE INDEX, etc.).
+//
+// DDL statements never use `?` placeholders so no dialect rewrite is
+// applied — the query goes through verbatim. Both dialects accept
+// the same CREATE/ALTER/DROP syntax; dialect-specific schema choices
+// are handled at the SchemaDDL helper layer (see dialect.go).
 func (d *DB) ExecDDL(ddl string) error { _, err := d.db.Exec(ddl); return err }
 
-// ExecInsert executes an INSERT (or similar DML) statement with arguments.
-func (d *DB) ExecInsert(query string, args ...any) error { _, err := d.db.Exec(query, args...); return err }
-
-// ExecResult executes a DML statement and returns the sql.Result for inspecting rows affected.
-func (d *DB) ExecResult(query string, args ...any) (sql.Result, error) {
-	return d.db.Exec(query, args...)
+// ExecInsert runs an INSERT (or similar DML) statement with arguments.
+// Phase 2.4: rewrites `?` placeholders to `$N` form when the connection
+// is Postgres. SQLite path: query passes through unchanged.
+func (d *DB) ExecInsert(query string, args ...any) error {
+	_, err := d.db.Exec(rewritePlaceholders(d.Dialect(), query), args...)
+	return err
 }
 
-// QueryRow executes a query expected to return at most one row.
-func (d *DB) QueryRow(query string, args ...any) *sql.Row { return d.db.QueryRow(query, args...) }
+// ExecResult runs a DML statement and returns the sql.Result for
+// inspecting rows affected. Phase 2.4: dialect-aware placeholder rewrite.
+func (d *DB) ExecResult(query string, args ...any) (sql.Result, error) {
+	return d.db.Exec(rewritePlaceholders(d.Dialect(), query), args...)
+}
 
-// RawQuery executes a query that returns rows.
-func (d *DB) RawQuery(query string, args ...any) (*sql.Rows, error) { return d.db.Query(query, args...) }
+// QueryRow runs a query expected to return at most one row.
+// Phase 2.4: dialect-aware placeholder rewrite.
+func (d *DB) QueryRow(query string, args ...any) *sql.Row {
+	return d.db.QueryRow(rewritePlaceholders(d.Dialect(), query), args...)
+}
+
+// RawQuery runs a query that returns rows.
+// Phase 2.4: dialect-aware placeholder rewrite.
+func (d *DB) RawQuery(query string, args ...any) (*sql.Rows, error) {
+	return d.db.Query(rewritePlaceholders(d.Dialect(), query), args...)
+}
+
+// runExec is the private helper used by db_commands.go's Save* and
+// Delete* methods that bypass the public *DB API for direct *sql.DB
+// access. Phase 2.4: routes through rewritePlaceholders so production
+// `?`-placeholder queries work on both dialects.
+func (d *DB) runExec(query string, args ...any) (sql.Result, error) {
+	return d.db.Exec(rewritePlaceholders(d.Dialect(), query), args...)
+}
+
+// runQuery is the private helper for direct row queries.
+func (d *DB) runQuery(query string, args ...any) (*sql.Rows, error) {
+	return d.db.Query(rewritePlaceholders(d.Dialect(), query), args...)
+}
+
+// runQueryRow is the private helper for single-row queries.
+func (d *DB) runQueryRow(query string, args ...any) *sql.Row {
+	return d.db.QueryRow(rewritePlaceholders(d.Dialect(), query), args...)
+}
 
 // Close closes the underlying database connection.
 func (d *DB) Close() error {
@@ -512,9 +547,10 @@ func (d *DB) Close() error {
 
 // GetConfig retrieves a value from the config table by key.
 // Returns ("", sql.ErrNoRows) if the key does not exist.
+// Phase 2.4: routes through runQueryRow for dialect-aware placeholder rewrite.
 func (d *DB) GetConfig(key string) (string, error) {
 	var value string
-	err := d.db.QueryRow(`SELECT value FROM config WHERE key = ?`, key).Scan(&value)
+	err := d.runQueryRow(`SELECT value FROM config WHERE key = ?`, key).Scan(&value)
 	if err != nil {
 		return "", err
 	}
@@ -527,7 +563,7 @@ func (d *DB) GetConfig(key string) (string, error) {
 // is the dialect-portable upsert form (SQLite ≥3.24, Postgres ≥9.5) per
 // kite-mcp-server Phase 2.1 audit. Single SQL string for both dialects.
 func (d *DB) SetConfig(key, value string) error {
-	_, err := d.db.Exec(`INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, value)
+	_, err := d.runExec(`INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, value)
 	if err != nil {
 		return fmt.Errorf("set config %s: %w", key, err)
 	}

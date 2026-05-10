@@ -16,7 +16,7 @@ import (
 // so data corruption is surfaced rather than silently producing a broken
 // Alert — callers decide whether to halt startup or skip the row.
 func (d *DB) LoadAlerts() (map[string][]*Alert, error) {
-	rows, err := d.db.Query(`SELECT id, email, tradingsymbol, exchange, instrument_token,
+	rows, err := d.runQuery(`SELECT id, email, tradingsymbol, exchange, instrument_token,
 		target_price, direction, triggered, created_at, triggered_at, triggered_price,
 		reference_price, notification_sent_at,
 		COALESCE(alert_type, 'single'), composite_logic, composite_name, conditions_json
@@ -99,7 +99,7 @@ func (d *DB) LoadAlerts() (map[string][]*Alert, error) {
 
 // LoadTelegramChatIDs reads all email-to-chatID mappings.
 func (d *DB) LoadTelegramChatIDs() (map[string]int64, error) {
-	rows, err := d.db.Query(`SELECT email, chat_id FROM telegram_chat_ids`)
+	rows, err := d.runQuery(`SELECT email, chat_id FROM telegram_chat_ids`)
 	if err != nil {
 		return nil, fmt.Errorf("query telegram chat ids: %w", err)
 	}
@@ -121,7 +121,7 @@ func (d *DB) LoadTelegramChatIDs() (map[string]int64, error) {
 // If an encryption key is set, access tokens are decrypted transparently.
 // Pre-encryption plaintext values are returned as-is (migration-safe).
 func (d *DB) LoadTokens() ([]*TokenEntry, error) {
-	rows, err := d.db.Query(`SELECT email, access_token, user_id, user_name, stored_at FROM kite_tokens`)
+	rows, err := d.runQuery(`SELECT email, access_token, user_id, user_name, stored_at FROM kite_tokens`)
 	if err != nil {
 		return nil, fmt.Errorf("query tokens: %w", err)
 	}
@@ -151,7 +151,7 @@ func (d *DB) LoadTokens() ([]*TokenEntry, error) {
 // If an encryption key is set, api_key and api_secret are decrypted transparently.
 // Pre-encryption plaintext values are returned as-is (migration-safe).
 func (d *DB) LoadCredentials() ([]*CredentialEntry, error) {
-	rows, err := d.db.Query(`SELECT email, api_key, api_secret, stored_at, COALESCE(app_id, '') FROM kite_credentials`)
+	rows, err := d.runQuery(`SELECT email, api_key, api_secret, stored_at, COALESCE(app_id, '') FROM kite_credentials`)
 	if err != nil {
 		return nil, fmt.Errorf("query credentials: %w", err)
 	}
@@ -182,7 +182,7 @@ func (d *DB) LoadCredentials() ([]*CredentialEntry, error) {
 // If an encryption key is set, client_secret is decrypted transparently.
 // Pre-encryption plaintext values are returned as-is (migration-safe).
 func (d *DB) LoadClients() ([]*ClientDBEntry, error) {
-	rows, err := d.db.Query(`SELECT client_id, client_secret, redirect_uris, client_name, created_at, is_kite_key FROM oauth_clients`)
+	rows, err := d.runQuery(`SELECT client_id, client_secret, redirect_uris, client_name, created_at, is_kite_key FROM oauth_clients`)
 	if err != nil {
 		return nil, fmt.Errorf("query oauth clients: %w", err)
 	}
@@ -215,7 +215,7 @@ func (d *DB) LoadClients() ([]*ClientDBEntry, error) {
 // session ID is recovered by decrypting session_id_enc. Rows without a valid
 // encrypted ID are skipped (stale pre-migration data).
 func (d *DB) LoadSessions() ([]*SessionDBEntry, error) {
-	rows, err := d.db.Query(`SELECT session_id, email, created_at, expires_at, terminated, COALESCE(session_id_enc, '') FROM mcp_sessions`)
+	rows, err := d.runQuery(`SELECT session_id, email, created_at, expires_at, terminated, COALESCE(session_id_enc, '') FROM mcp_sessions`)
 	if err != nil {
 		return nil, fmt.Errorf("query sessions: %w", err)
 	}
@@ -259,7 +259,7 @@ func (d *DB) LoadSessions() ([]*SessionDBEntry, error) {
 
 // LoadTrailingStops reads all active trailing stops from the database.
 func (d *DB) LoadTrailingStops() ([]*TrailingStop, error) {
-	rows, err := d.db.Query(`SELECT id, email, exchange, tradingsymbol, instrument_token,
+	rows, err := d.runQuery(`SELECT id, email, exchange, tradingsymbol, instrument_token,
 		order_id, variety, trail_amount, trail_pct, direction,
 		high_water_mark, current_stop, active, created_at, deactivated_at,
 		modify_count, last_modified_at
@@ -307,7 +307,7 @@ func (d *DB) LoadTrailingStops() ([]*TrailingStop, error) {
 // db_migrations.go), so callers always observe a non-empty Currency
 // string on a successful Load.
 func (d *DB) LoadDailyPnL(email, fromDate, toDate string) ([]*DailyPnLEntry, error) {
-	rows, err := d.db.Query(`SELECT date, email,
+	rows, err := d.runQuery(`SELECT date, email,
 		holdings_pnl, holdings_pnl_currency,
 		positions_pnl, positions_pnl_currency,
 		net_pnl, net_pnl_currency,
@@ -337,7 +337,7 @@ func (d *DB) LoadDailyPnL(email, fromDate, toDate string) ([]*DailyPnLEntry, err
 // LoadRegistryEntries reads all app registrations from the database.
 // If an encryption key is set, api_secret is decrypted transparently.
 func (d *DB) LoadRegistryEntries() (map[string]*RegistryDBEntry, error) {
-	rows, err := d.db.Query(`SELECT id, api_key, api_secret, assigned_to, label, status, registered_by, source, last_used_at, created_at, updated_at FROM app_registry`)
+	rows, err := d.runQuery(`SELECT id, api_key, api_secret, assigned_to, label, status, registered_by, source, last_used_at, created_at, updated_at FROM app_registry`)
 	if err != nil {
 		return nil, fmt.Errorf("query app_registry: %w", err)
 	}

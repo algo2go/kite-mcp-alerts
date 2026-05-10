@@ -35,6 +35,7 @@ package alerts
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // Dialect identifies the database backend dialect for SQL dispatch.
@@ -239,6 +240,56 @@ func (d *DB) ColumnExists(table, column string) (bool, error) {
 		return false, fmt.Errorf("alerts.DB.ColumnExists: nil receiver")
 	}
 	return ColumnExists(d.Dialect(), d.db, table, column)
+}
+
+// rewritePlaceholders converts SQLite-style `?` positional placeholders
+// to Postgres-style `$1, $2, $3, ...` form when needed. SQLite accepts
+// `?` natively (and is what our production SQL uses); pgx/v5/stdlib
+// requires `$N` form for the same Exec/Query call.
+//
+// Phase 2.4 empirical finding: pgx/v5/stdlib does NOT translate `?` →
+// `$N` automatically. The Phase 2.1 audit had incorrectly assumed it
+// did. This helper closes that gap so production Save* methods that
+// use `?` placeholders run unchanged on both dialects via the new
+// dialect-aware *DB.exec / *DB.query / *DB.queryRow helpers (see
+// db.go).
+//
+// Algorithm: walks the query left-to-right, replacing each `?` with
+// `$N` where N is the 1-based occurrence count. Quote-awareness is
+// NOT implemented because empirically NONE of our production SQL
+// contains `?` inside a string literal (verified at Phase 2.4
+// authoring time). If a future query introduces a literal `?` the
+// rewriter would need to be upgraded to a quote-aware variant; until
+// then this simple scan is safe and ~10x faster than tokenizing.
+//
+// SQLite path: returns the input unchanged (modernc.org/sqlite uses
+// `?` natively).
+//
+// No-op when query has no `?` (config queries pre-converted to ON
+// CONFLICT during Phase 2.1).
+func rewritePlaceholders(d Dialect, query string) string {
+	if d != DialectPostgres {
+		return query
+	}
+	if !strings.Contains(query, "?") {
+		return query
+	}
+	var b strings.Builder
+	b.Grow(len(query) + 16)
+	n := 0
+	for _, r := range query {
+		if r == '?' {
+			n++
+			b.WriteByte('$')
+			if n >= 10 {
+				b.WriteByte(byte('0' + n/10))
+			}
+			b.WriteByte(byte('0' + n%10))
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // isSafeIdent restricts SQL identifiers (table names) to the subset
