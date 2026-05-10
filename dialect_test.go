@@ -30,6 +30,17 @@ func openSQLiteForDialectTest(t *testing.T) *sql.DB {
 	return db
 }
 
+// mustOpenMemDB opens a fresh in-memory *DB with the full schema
+// pre-applied via OpenDB. Used by the *DB-method-style wrapper tests
+// that need a real *alerts.DB receiver (not a raw *sql.DB).
+func mustOpenMemDB(t *testing.T) *DB {
+	t.Helper()
+	db, err := OpenDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
 // ----- PragmaInit ----------------------------------------------------------
 
 func TestPragmaInit_SQLite_Succeeds(t *testing.T) {
@@ -224,6 +235,56 @@ func TestIsSafeIdent(t *testing.T) {
 			assert.Equal(t, c.want, isSafeIdent(c.in), "isSafeIdent(%q)", c.in)
 		})
 	}
+}
+
+// ----- Method-style wrappers on *DB ----------------------------------------
+
+func TestDB_TableExists_Present(t *testing.T) {
+	t.Parallel()
+	db := mustOpenMemDB(t)
+	exists, err := db.TableExists("alerts")
+	require.NoError(t, err)
+	assert.True(t, exists, "alerts table created by OpenDB should be reported by TableExists")
+}
+
+func TestDB_TableExists_Absent(t *testing.T) {
+	t.Parallel()
+	db := mustOpenMemDB(t)
+	exists, err := db.TableExists("nonexistent")
+	require.NoError(t, err)
+	assert.False(t, exists)
+}
+
+func TestDB_TableExists_NilReceiver_Errors(t *testing.T) {
+	t.Parallel()
+	var d *DB
+	_, err := d.TableExists("alerts")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nil receiver")
+}
+
+func TestDB_ColumnExists_Present(t *testing.T) {
+	t.Parallel()
+	db := mustOpenMemDB(t)
+	exists, err := db.ColumnExists("alerts", "email")
+	require.NoError(t, err)
+	assert.True(t, exists)
+}
+
+func TestDB_ColumnExists_Absent(t *testing.T) {
+	t.Parallel()
+	db := mustOpenMemDB(t)
+	exists, err := db.ColumnExists("alerts", "nonexistent_col")
+	require.NoError(t, err)
+	assert.False(t, exists)
+}
+
+func TestDB_ColumnExists_NilReceiver_Errors(t *testing.T) {
+	t.Parallel()
+	var d *DB
+	_, err := d.ColumnExists("alerts", "email")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nil receiver")
 }
 
 // ----- SchemaDDL -----------------------------------------------------------

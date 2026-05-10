@@ -209,6 +209,37 @@ func ColumnExists(d Dialect, db *sql.DB, table, column string) (bool, error) {
 	}
 }
 
+// ----- Method-style wrappers on *DB ---------------------------------------
+//
+// Downstream callers like kite-mcp-billing hold a *alerts.DB (the
+// concrete handle), not a raw *sql.DB. They cannot call the package-
+// level helpers above directly because we don't expose the inner
+// *sql.DB (encapsulation). The methods below delegate to the
+// package-level helpers using the inner sql handle, keeping the
+// dialect dispatch in one place while letting consumers stay on the
+// stable *alerts.DB type.
+
+// TableExists is the *alerts.DB-level wrapper for the package-level
+// TableExists helper. Uses DialectSQLite at v0.3.0 (only driver in
+// production); Phase 2.2 will add a Dialect() method on *DB so this
+// wrapper picks the dialect from the open connection.
+func (d *DB) TableExists(name string) (bool, error) {
+	if d == nil {
+		return false, fmt.Errorf("alerts.DB.TableExists: nil receiver")
+	}
+	return TableExists(DialectSQLite, d.db, name)
+}
+
+// ColumnExists is the *alerts.DB-level wrapper for the package-level
+// ColumnExists helper. See TableExists for the dialect-detection
+// rationale.
+func (d *DB) ColumnExists(table, column string) (bool, error) {
+	if d == nil {
+		return false, fmt.Errorf("alerts.DB.ColumnExists: nil receiver")
+	}
+	return ColumnExists(DialectSQLite, d.db, table, column)
+}
+
 // isSafeIdent restricts SQL identifiers (table names) to the subset
 // [a-zA-Z0-9_] that we use throughout this codebase. Used by
 // ColumnExists to guard the literal-substitution code path that the
