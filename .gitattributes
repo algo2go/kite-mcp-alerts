@@ -1,0 +1,38 @@
+# Normalize line endings to LF across the repo. This file was added in
+# response to multi-module CRLF working-tree churn caused by Windows
+# clones converting LF→CRLF in the working tree while the index stayed
+# LF. With `* text=auto eol=lf`, every text file is checked out with LF
+# regardless of platform.
+#
+# Source files (Go, Markdown, JSON, YAML, TOML, shell scripts) are LF.
+# Windows-only batch scripts stay CRLF — that is the platform expectation.
+* text=auto eol=lf
+
+# Source code
+*.go         text eol=lf
+*.mod        text eol=lf
+*.sum        text eol=lf
+
+# Docs + config
+*.md         text eol=lf
+*.markdown   text eol=lf
+*.json       text eol=lf
+*.yaml       text eol=lf
+*.yml        text eol=lf
+*.toml       text eol=lf
+
+# Shell scripts: LF on all platforms (run via bash)
+*.sh         text eol=lf
+
+# Windows batch + cmd: CRLF expected
+*.bat        text eol=crlf
+*.cmd        text eol=crlf
+
+# Binary — never touch
+*.png        binary
+*.jpg        binary
+*.jpeg       binary
+*.gif        binary
+*.ico        binary
+*.pdf        binary
+*.zip        binary
