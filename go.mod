@@ -26,11 +26,11 @@ go 1.25.0
 // this dispatch — must come BEFORE kc/papertrading + kc/usecases +
 // kc/telegram which all import kc/alerts).
 require (
-	github.com/algo2go/kite-mcp-broker v0.1.0
-	github.com/algo2go/kite-mcp-domain v0.1.0
-	github.com/algo2go/kite-mcp-isttz v0.1.0
-	github.com/algo2go/kite-mcp-logger v0.1.0
-	github.com/algo2go/kite-mcp-money v0.1.0 // indirect
+	github.com/algo2go/kite-mcp-broker v0.1.2
+	github.com/algo2go/kite-mcp-domain v0.1.2
+	github.com/algo2go/kite-mcp-isttz v0.1.1
+	github.com/algo2go/kite-mcp-logger v0.1.1
+	github.com/algo2go/kite-mcp-money v0.1.1 // indirect
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
 	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.11.1
